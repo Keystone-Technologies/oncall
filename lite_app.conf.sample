@@ -1,0 +1,20 @@
+{
+  default_message => 'Default Message',
+  callfire => {
+    username => 'xxx',
+    password => 'xxx'
+  },
+  oncall => [
+    ['John Doe' => '15551231234'],
+    ['Jane Doe' => '15551231235'],
+  ],
+  sendgrid => {
+    apikey => 'xxx',
+  },
+  test_email => {
+    to => 'x@x.com',
+    from => 'y@y.com',
+    subject => 'TEST',
+    text => 'TEST',
+  },
+};

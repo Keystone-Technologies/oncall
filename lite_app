@@ -1,0 +1,78 @@
+#!/usr/bin/env perl
+use Mojolicious::Lite;
+
+use Mojo::JSON qw/j true false/;
+use Mojo::JSON::Pointer;
+
+plugin 'Config';
+plugin 'Sendgrid';
+
+get '/' => sub {
+  my $c = shift->render_later;
+  my $user = $c->config('callfire')->{username};
+  my $password = $c->config('callfire')->{password};
+  my $oncall = $c->app->home->child('oncall')->slurp;
+  $oncall = Mojo::Collection->new(@{$c->config('oncall')})->grep(sub{$_->[1] eq $oncall})->first;
+  $c->ua->get("https://$user:$password\@api.callfire.com/v2/calls?limit=10" => sub {
+    my ($ua, $tx) = @_;
+    $c->render(oncall => $oncall, calls => $tx->res->json->{items});
+  });
+} => 'index';
+
+post '/oncall' => sub {
+  my $c = shift;
+  $c->app->log->info($c->param('oncall'));
+  $c->app->home->child('oncall')->spurt($c->param('oncall'));
+  $c->redirect_to('index');
+};
+
+get '/test' => sub {
+  my $c = shift->render_later;
+  $c->app->log->info('GET /test');
+  $c->sendgrid->mail(%{$c->config('test_email')})->send;
+  $c->redirect_to('index');
+};
+
+post '/call' => sub {
+  my $c = shift->render_later;
+  $c->app->log->info('POST /call');
+  my $email = Mojo::JSON::Pointer->new($c->req->json);
+  my $subject = $email->get('/headers/Subject') || $c->config('default_message');
+  my $user = $c->config('callfire')->{username};
+  my $password = $c->config('callfire')->{password};
+  my $oncall = $c->app->home->child('oncall')->slurp;
+  $c->app->log->info("$subject -> $oncall");
+  # Move this to Minion and let it repeat for up to an hour and then escalate to supervisors
+  # https://developers.callfire.com/results-responses-errors.html
+  $c->ua->post("https://$user:$password\@api.callfire.com/v2/calls" => json => [{phoneNumber => $oncall, liveMessage => $subject, machineMessage => $subject}] => sub {
+    my ($ua, $tx) = @_;
+    # https://developers.callfire.com/docs.html#sendCalls
+    $c->app->log->info($tx->res->body);
+    $c->render(json => {ok => true});
+  });
+};
+
+app->start;
+__DATA__
+
+@@ index.html.ep
+% layout 'default';
+% title 'On-Call';
+On call: <%= $oncall->[0] %> <%= link_to '[Test]' => 'test' %> (or send an email to <%= config('test_email')->{to} %>)
+%= form_for 'oncall' => (method => 'POST') => begin
+  %# Move this to a config file
+  %= select_field oncall => config 'oncall'
+  %= submit_button
+% end
+<hr />
+<p>History:</p>
+% foreach my $call ( @$calls ) {
+  <pre><%= dumper $call %></pre>
+% }
+
+@@ layouts/default.html.ep
+<!DOCTYPE html>
+<html>
+  <head><title><%= title %></title></head>
+  <body><%= content %></body>
+</html>
